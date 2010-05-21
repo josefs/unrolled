@@ -58,3 +58,25 @@ represented much more succintly unboxed.
 
 Early versions of this paper was written in markdown and processed
 with pandoc. I'm greatful to John McFarlane for this wonderful tool.
+
+# Related Work
+
+In 1994 Zhong Shao, Andrew Appel and John Reppy wrote a published a
+paper called "Unrolling Lists". This paper has naturally been a big
+source of inspiration for the work presented here, but there are some
+major differences in approaches:
+
+* Shao et. al. uses a representation which guarantees that the list
+  has a certain shape. For instance, if a list has an odd number of
+  elements the single constructor is guaranteed to be at the front of
+  the list and all other elements come in pairs. This representation
+  makes sense when lists are strict but is unsuitable for lazy lists.
+
+* Shao et. al. uses program analysis to guide a program transformation
+  which converts ordinary lists to unrolled ones. This has the
+  advantage of providing speedups without the programmer having to do
+  anything. However, it lacks in transparency and the programmer who
+  wishes to have some control over when unrolled lists are used is at
+  loss. Our approach is to expose unrolled lists as a library which
+  give the programmer full control over when a where it is
+  invoked.
