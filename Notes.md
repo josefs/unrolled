@@ -10,9 +10,35 @@ replacement to the standard Data.List library. In particular we want to
 preserve the strictness properties of all functions. At least as far as
 possible.
 
+# Deciding representation
+
+## No static guarantees
+
+The representation used in "Unrolling Lists" guarantees that the list
+is completely unrolled. However, in order to provide this guarantee
+the list operations have to be strict which is something we want to
+avoid.
+
 # Unrolling amount
 
 How many times should a list be unrolled?
+
+# Recreate structure
+
+If a function is given a list containing many single Cons:es, should
+it try to recreate NCons:es?
+
+Show some micro benchmarks which suggest that this would be a loss in
+general. If the unrolling of a list is lost, we're better off keeping it
+"rolled".
+
+Another thing to keep in mind is that if the functions try to do unrolling
+even if the input list is not unrolled they will become much stricter.
+For instance, suppose that `zipWith` tried to create an unrolled list. Then
+the following program would not work:
+~~~~
+fib = 1 : 1 : zipWith (+) fib (tail fib)
+~~~~
 
 # Related work
 
