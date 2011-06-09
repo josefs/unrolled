@@ -37,15 +37,20 @@ genModule n = Module
               ,ImportDecl noLoc (ModuleName "Prelude") False False 
                Nothing Nothing (Just (True,
                map (IVar . Ident) 
-               ["map","take","drop","takeWhile","zip","zipWith","filter"] ++
+               ["map","take","drop","takeWhile","zip","zipWith","filter"
+               ,"sum"] ++
                map (IVar . Symbol)
                ["++"]))
+              ,ImportDecl noLoc (ModuleName "Data.List") True False
+                          Nothing Nothing
+                          (Just (False,[IVar (Ident "sort")]))
               ]
                -- decls
               [listDeclaration n
               ,functorInstance n
               ,monadInstance n
-              ,enumClass
+              ,enumClass,enumInstanceInt
+              ,eftIntTy,eftIntDec n
               ,toListTy,toListNil,toListCons,toListNCons n
               ,fromListTy,fromListNil,fromListCons
               ,elemIndexTy,elemIndex
@@ -58,7 +63,11 @@ genModule n = Module
               ,headTy,headNil,headCons,headNCons n
               ,tailTy,tailNil,tailCons,tailNCons n
               ,nullTy,nullNil,nullCons,nullNCons n
+              ,lengthTy,lengthDec,lenTy,lenNil,lenCons,lenNCons n
               ,mapTy,mapNil,mapCons,mapNCons n
+              ,sumSpec,sumLoopSpec
+              ,sumTy,sumDec,sumLoopTy,sumLoopNil,sumLoopCons,sumLoopNCons n
+              ,sumBadTy,sumBadNil,sumBadCons,sumBadNCons n
               ,takeTy,takeZero,takeNil,takeCons,takeNCons n
               ,dropTy,dropZero,dropNil,dropCons,dropNCons n
               ,splitAtDef
@@ -68,6 +77,8 @@ genModule n = Module
               ,zipNil1,zipNil2,zipCons,zipConsN1 n,zipConsN2 n,zipNCons n
               ,zipWithTy, zipWithNil1,zipWithNil2,zipWithCons
               ,zipWithConsN1 n,zipWithConsN2 n,zipWithNCons n
+
+              ,sortTy,sortDec
 
               ,errEmptyTy,errEmptyDec n
               ]
@@ -138,6 +149,43 @@ class Enum a => EnumList a where
     enumFromThenToL        :: a -> a -> a -> List a
     enumFromThenToL f th t = fromList $ enumFromThenTo f th t
 |]
+
+enumInstanceInt = InstDecl noLoc [] (UnQual (Ident "EnumList")) [TyCon (UnQual (Ident "Int"))]
+                  [InsDecl $
+                           functionCl "enumFromToL"
+                                          [PApp (UnQual (Ident "I#")) [varp "i"]
+                                          ,PApp (UnQual (Ident "I#")) [varp "j"]]
+                           (apps [var "eftInt",var "i",var "j"])
+                  ]
+
+eftIntTy    = [dec| eftInt :: Int# -> Int# -> List Int |]
+eftIntDec n = [dec| eftInt x0 y | x0 ># y   = Nil
+                                | otherwise = $(eftIntLoop n)
+                 |]
+
+eftIntLoop n = Let (BDecls [functionCl "go" [varp "x"] $
+                  Case (InfixApp x (QVarOp (UnQual (Symbol "-#"))) y) $
+                           [ Alt noLoc (PLit (PrimInt i))
+                                     (UnGuardedAlt (conses [ apps [constr "I#"
+                                                                  ,x +#+  (Lit (PrimInt j))]
+                                                           | j <- [0..i] ] (constr "Nil")))
+                                     (BDecls [])
+                           | i <- [0..toInteger n - 2] ]
+                           ++
+                           [Alt noLoc PWildCard
+                                    (UnGuardedAlt (apps ([constr "NCons"] ++
+                                                         [apps [constr "I#"
+                                                               ,x +#+  (Lit (PrimInt i)) ]
+                                                         | i <- [0..toInteger n - 1] ] ++
+                                                         [apps [var "eftInt"
+                                                               ,x +#+ (Lit (PrimInt (toInteger n)))
+                                                               ,y
+                                                               ]])))
+                            (BDecls [])]])
+          (apps [var "go", var "x0"])
+  where x +#+ y = InfixApp x (QVarOp (UnQual (Symbol "+#"))) y
+        x = var "x"
+        y = var "y"
 
 toListTy   = [dec| toList :: List a -> [a]            |]
 toListNil  = [dec| toList Nil         = []            |]
@@ -242,7 +290,17 @@ nullCons = [dec| null (Cons _ _) = False |]
 nullNCons n =
     functionCl "null" [nconsp "x" n "xs"] (constr "False")
 
-length = u
+lengthTy  = [dec| length :: List a -> Int  |]
+lengthDec = [dec| length l = I# (len l 0#) |]
+
+lenTy = [dec| len :: List a -> Int# -> Int# |]
+lenNil = [dec| len Nil a# = a# |]
+lenCons = [dec| len (Cons _ xs) a# = len xs (a# +# 1#) |]
+lenNCons n =
+    functionCl "len" [nconsp "x" n "xs",varp "a#"] $
+               apps [var "len",var "xs"
+                    ,InfixApp (var "a#") (QVarOp (UnQual (Symbol "+#")))
+                                  (Lit (PrimInt (toInteger n)))]
 
 mapTy   = [dec| map :: (a -> b) -> List a -> List b     |]
 mapNil  = [dec| map f Nil = Nil                         |]
@@ -287,6 +345,34 @@ any = u
 
 all = u
 
+sumBadTy   = [dec| sumBad :: (Num a) => List a -> a |]
+sumBadNil  = [dec| sumBad Nil = 0 |]
+sumBadCons = [dec| sumBad (Cons x xs) = x + (sumBad xs) |]
+sumBadNCons n =
+    functionCl "sumBad" [nconsp "x" n "xs"] $
+               pluses [var ("x" ++ show i) | i <- [1..n]]
+                      (apps [var "sumBad", var "xs"])
+
+
+sumSpec = [dec| {-# SPECIALISE sum :: List Int -> Int #-} |]
+
+sumTy  = [dec| sum :: (Num a) => List a -> a |]
+sumDec = [dec| sum l = sumLoop l 0           |]
+
+sumLoopSpec = [dec| {-# SPECIALISE sumLoop :: List Int -> Int -> Int #-} |]
+
+sumLoopTy   = [dec| sumLoop :: Num a => List a -> a -> a |]
+sumLoopNil  = [dec| sumLoop Nil a = a                    |]
+sumLoopCons = [dec| sumLoop (Cons x xs) a = let s = a+x in s `seq` sumLoop xs s |]
+sumLoopNCons n =
+    functionCl "sumLoop" [nconsp "x" n "xs", varp "a"] $
+               Let (BDecls [functionCl "s" [] 
+                            (pluses [var ("x" ++ show i) | i <- [1..n]] (var "a"))
+                           ])
+                   (apps [var "seq", var "s", apps [var "sumLoop"
+                                                   ,var "xs"
+                                                   ,var "s"]
+                         ])
 sum = u
 
 product = u
@@ -408,8 +494,6 @@ notElem = u
 
 lookup = u
 
-filter = u
-
 filterTy   = [dec| filter :: (a -> Bool) -> List a -> List a        |]
 filterNil  = [dec| filter _ Nil = Nil                               |]
 filterCons = [dec| filter p (Cons x xs) | p x = Cons x (filter p xs)
@@ -453,15 +537,6 @@ findIndicesDef n =
                                      ]
                     ])
                    (apps [var "loop", Lit (PrimInt 0), var "xs"])
-{-
-loop _ Nil = Nil
-                    loop n (Cons x xs) | p x = Cons (I# n) (loop (n +# 1#) xs)
-                                       | otherwise = loop (n +# 1#) xs
-findILoop n =
-    functionCl "loop" [varp "n",nconsp "x" n "xs"] $
-               ifChain
--}
-findIndices = u
 
 -- I get really weird error messages involving interface files when I uncomment
 -- the zipTy line.
@@ -534,7 +609,8 @@ union = u
 
 intersect = u
 
-sort = u
+sortTy  = [dec| sort :: Ord a => List a -> List a       |]
+sortDec = [dec| sort = fromList . Data.List.sort . toList |]
 
 insert = u
 
@@ -588,6 +664,8 @@ conses ls exp = foldr (\x a -> apps [Con (UnQual (Ident "Cons"))
 pps ls exp = foldr (\x a -> InfixApp x (QVarOp (UnQual (Symbol "++"))) a) exp ls
 
 colons ls exp = foldr (\x a -> InfixApp x (QConOp (UnQual (Symbol ":"))) a) exp ls
+
+pluses ls exp = foldr (\x a -> InfixApp x (QVarOp (UnQual (Symbol "+"))) a) exp ls
 
 var name = Var (UnQual (Ident name))
 
